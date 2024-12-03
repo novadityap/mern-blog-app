@@ -1,126 +1,178 @@
-import * as fs from 'node:fs/promises';
+import { readFile, unlink, copyFile, access } from 'node:fs/promises';
 import path from 'node:path';
 import User from '../src/models/userModel.js';
 import Category from '../src/models/categoryModel.js';
 import Post from '../src/models/postModel.js';
+import Role from '../src/models/roleModel.js';
+import Permission from '../src/models/permissionModel.js';
+import Comment from '../src/models/commentModel.js';
 import mongoose from 'mongoose';
 import jwt from 'jsonwebtoken';
+import bcrypt from 'bcrypt';
 
 const uploadDirs = {
   avatars: process.env.AVATAR_UPLOADS_DIR,
   posts: process.env.POST_UPLOADS_DIR,
 };
 
-export const createTestUser = async () => {
-  return await User.create({
-    username: 'test',
-    email: 'test@me.com',
-    password: 'test123',
-  });
-};
-
-export const createManyTestUsers = async count => {
-  const users = [];
-
-  for (let i = 0; i < count; i++) {
-    users.push(
-      User.create({
-        username: `test${i}`,
-        email: `test${i}@me.com`,
-        password: 'test123',
-      })
-    );
-  }
-
-  return await Promise.all(users);
-};
-
-export const removeAllTestUsers = async () => {
-  await User.deleteMany({ username: { $regex: /^test\d*/ } });
-};
-
-export const removeTestUser = async () => {
-  await User.findOneAndDelete({ username: 'test' });
-};
-
 export const getTestUser = async () => {
   return await User.findOne({ username: 'test' });
 };
 
-export const createTestCategory = async () => {
-  return await Category.create({
-    name: 'test',
+export const createTestUser = async (fields = {}) => {
+  return await User.create({
+    username: 'test',
+    email: 'test@me.com',
+    password: await bcrypt.hash('test123', 10),
+    resetToken: '123',
+    resetTokenExpires: Date.now() + 1 * 60 * 60 * 1000,
+    ...fields,
   });
 };
 
-export const createManyTestCategories = async count => {
-  const categories = [];
+export const createManyTestUsers = async () => {
+  const users = Array.from({ length: 15 }, (_, i) => createTestUser({ email: `test${i}@me.com` }));
 
-  for (let i = 0; i < count; i++) {
-    categories.push(
-      Category.create({
-        name: `test${i}`,
-      })
-    );
-  }
-
-  return await Promise.all(categories);
+  await Promise.all(users);
+  return users;
 };
 
-export const removeTestCategory = async () => {
-  await Category.findOneAndDelete({ name: 'test' });
+export const removeTestUser = async (filter = {}) => {
+  await User.deleteMany({ 
+    username: { $regex: /^test/ }, 
+    ...filter 
+  });
 };
 
-export const createTestPost = async () => {
+export const createTestCategory = async (fields = {}) => {
+  return await Category.create({ name: 'test', ...fields });
+};
+
+export const removeTestCategory = async (filter = {}) => {
+  await Category.deleteMany({ 
+    name: { $regex: /^test/ }, 
+    ...filter 
+  });
+};
+
+export const createManyTestCategories = async () => {
+  const categories = Array.from({ length: 15 }, (_, i) => createTestCategory({ name: `test${i}` }));
+
+  await Promise.all(categories);
+  return categories;
+};
+
+export const createTestComment = async (fields = {}) => {
   const user = await createTestUser();
-  const category = await createTestCategory();
 
+  return await Comment.create({ 
+    userId: user._id,
+    content: 'test', 
+    ...fields 
+  });
+};
+
+export const createManyTestComments = async (fields = {}) => {
+  const comments = Array.from({ length: 15 }, (_, i) => createTestComment({ 
+    content: `test${i}`,
+    ...fields, 
+  }));
+
+  await Promise.all(comments);
+  return comments;
+};
+
+export const removeTestComment = async (filter = {}) => {
+  await Comment.deleteMany({ 
+    content: { $regex: /^test/ }, 
+    ...filter 
+  });
+};
+
+export const createTestPost = async (fields = {}) => {
   return await Post.create({
     title: 'test',
     slug: 'test',
     content: 'test',
-    user: user._id,
-    category: category._id,
+    ...fields,
   });
 };
 
-export const createManyTestPosts = async count => {
-  const users = await createManyTestUsers(count);
-  const categories = await createManyTestCategories(count);
-  const posts = [];
-
-  for (let i = 0; i < count; i++) {
-    posts.push(
-      Post.create({
-        title: `test${i}`,
-        slug: `test${i}`,
-        content: 'test',
-        user: users[i]._id,
-        category: categories[i]._id,
-      })
-    );
-  }
-
-  return await Promise.all(users);
-};
-
-export const removeTestPost = async () => {
-  await Post.findOneAndDelete({ title: 'test' });
+export const removeTestPost = async (filter = {}) => {
+  await Post.deleteMany({ 
+    title: { $regex: /^test/ }, 
+    ...filter 
+  });
 };
 
 export const getTestPost = async () => {
   return await Post.findOne({ title: 'test' });
 };
 
-export const removeAllTestPosts = async () => {
-  await Post.deleteMany({ title: { $regex: /^test\d*/ } });
+export const createManyTestPosts = async () => {
+  const categories = await createManyTestCategories();
+  const posts = Array.from({ length: 15 }, (_, i) => createTestPost({ 
+    slug: `test${i}`, 
+    content: `test${i}`, 
+    category: categories[i]._id 
+  }));
+
+  await Promise.all(posts);
+  return posts;
 };
 
-export const createAuthToken = type => {
+export const createTestRole = async (fields = {}) => {
+  return await Role.create({
+    name: 'test',
+    ...fields,
+  });
+};
+
+export const createManyTestRoles = async () => {
+  const roles = Array.from({ length: 15 }, (_, i) => createTestRole({ name: `test${i}` }));
+
+  await Promise.all(roles);
+  return roles;
+};
+
+export const removeTestRole = async (filter = {}) => {
+  await Role.deleteMany({ 
+    name: { $regex: /^test/ }, 
+    ...filter 
+  });
+};
+
+export const createTestPermission = async (fields = {}) => {
+  return await Permission.create({
+    action: 'test',
+    resource: 'test',
+    description: 'test',
+    ...fields,
+  });
+};
+
+export const createManyTestPermissions = async () => {
+  const permissions = Array.from({ length: 15 }, (_, i) => createTestPermission({
+    action: `test${i}`,
+    resource: `test${i}`,
+  }));
+
+  await Promise.all(permissions);
+  return permissions;
+};
+
+export const removeTestPermission = async (filter = {}) => {
+  await Permission.deleteMany({ 
+    action: { $regex: /^test/ }, 
+    ...filter 
+  });
+};
+
+export const createToken = (type, role = 'admin') => {
   return jwt.sign(
     {
       id: new mongoose.Types.ObjectId(),
-      roles: ['admin'],
+      roles: [role],
     },
     type === 'auth' ? process.env.JWT_SECRET : process.env.JWT_REFRESH_SECRET,
     {
@@ -136,14 +188,14 @@ export const fileExists = async (directory, filename) => {
   const filePath = path.join(process.cwd(), uploadDirs[directory], filename);
 
   try {
-    await fs.access(filePath);
+    await access(filePath);
     return true;
   } catch (e) {
     return false;
   }
 };
 
-export const copyFile = async (source, directory) => {
+export const copyToUploadDir  = async (source, directory) => {
   const filename = path.basename(source);
   const destinationPath = path.join(
     process.cwd(),
@@ -151,24 +203,19 @@ export const copyFile = async (source, directory) => {
     filename
   );
 
-  await fs.copyFile(source, destinationPath);
+  await copyFile(source, destinationPath);
 };
 
-export const removeFile = async (directory, filename) => {
-  const directories = {
-    avatars: process.env.AVATAR_UPLOADS_DIR,
-    posts: process.env.POST_UPLOADS_DIR,
-  };
-  const filePath = path.join(process.cwd(), directories[directory], filename);
-
-  await fs.unlink(filePath);
+export const removeUploadedFile  = async (directory, filename) => {
+  const filePath = path.join(process.cwd(), uploadDirs[directory], filename);
+  await unlink(filePath);
 };
 
 export const readLogs = async () => {
   const path = `${process.cwd()}/src/logs/app-${
     new Date().toISOString().split('T')[0]
   }.log`;
-  const log = await fs.readFile(path, 'utf-8');
+  const log = await readFile(path, 'utf-8');
 
   return log
     .trim()

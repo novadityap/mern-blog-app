@@ -3,7 +3,6 @@ import app from '../src/app.js';
 import connectDB from '../src/config/connection.js';
 import mongoose from 'mongoose';
 import path from 'node:path';
-import * as fs from 'node:fs/promises';
 import Role from '../src/models/roleModel.js';
 import Permission from '../src/models/permissionModel.js';
 import seedRole from '../src/seeders/roleSeeder.js';
@@ -12,17 +11,18 @@ import {
   createTestUser,
   createManyTestUsers,
   getTestUser,
-  createAuthToken,
+  createToken,
+  createTestRole,
+  removeTestRole,
   removeTestUser,
-  removeAllTestUsers,
   fileExists,
-  copyFile,
+  copyToUploadDir,
+  removeUploadedFile,
 } from './testUtil.js';
 
-let adminRole;
-const token = createAuthToken('auth');
-const invalidId = undefined;
-const missingId = new mongoose.Types.ObjectId();
+const adminToken = createToken('auth', 'admin');
+const userToken = createToken('auth', 'user');
+const invalidToken = createToken('auth', 'invalid');
 const testAvatarPath = path.join(
   process.cwd(),
   'tests/uploads/avatars',
@@ -30,14 +30,14 @@ const testAvatarPath = path.join(
 );
 const cases = [
   {
-    name: 'invalid user id',
-    id: invalidId,
+    name: 'user id is invalid',
+    id: 'invalid',
     expectedStatus: 400,
-    expectedMessage: 'Invalid id',
+    expectedMessage: 'Validation errors',
   },
   {
-    name: 'missing user id',
-    id: missingId,
+    name: 'user not found',
+    id: new mongoose.Types.ObjectId(),
     expectedStatus: 404,
     expectedMessage: 'User not found',
   },
@@ -47,12 +47,11 @@ beforeAll(async () => {
   await connectDB();
   await seedPermission();
   await seedRole();
-  adminRole = await Role.findOne({ name: 'admin' });
 });
 
 afterAll(async () => {
-  await Role.deleteMany({});
-  await Permission.deleteMany({});
+  await Role.deleteMany();
+  await Permission.deleteMany();
   await mongoose.connection.close();
 });
 
@@ -63,124 +62,185 @@ describe('GET /api/users', () => {
 
   afterEach(async () => {
     await removeTestUser();
-    await removeAllTestUsers();
   });
 
-  it('should return 200 and fetch all users without search query', async () => {
+  it('should reject if unauthorized access', async () => {
     const res = await request(app)
       .get('/api/users')
-      .set('Authorization', `Bearer ${token}`)
-      .query({
-        page: 1,
-        limit: 2,
-      });
+      .set('Authorization', `Bearer ${userToken}`);
+
+    expect(res.status).toBe(403);
+    expect(res.body.message).toBe('Permission denied');
+  });
+
+  it('should can search without parameter', async () => {
+    const res = await request(app)
+      .get('/api/users')
+      .set('Authorization', `Bearer ${adminToken}`)
 
     expect(res.status).toBe(200);
     expect(res.body.message).toBe('Users found');
-    expect(res.body.data).toHaveLength(2);
-    expect(res.body.meta.pageSize).toBe(2);
+    expect(res.body.data).toHaveLength(10);
+    expect(res.body.meta.pageSize).toBe(10);
+    expect(res.body.meta.totalItems).toBeGreaterThanOrEqual(15);
     expect(res.body.meta.currentPage).toBe(1);
+    expect(res.body.meta.totalPages).toBe(2);
   });
 
-  it('should return 200 and fetch users with search query matching username', async () => {
+  it('should can search to page 2', async () => {
     const res = await request(app)
       .get('/api/users')
-      .set('Authorization', `Bearer ${token}`)
-      .query({
-        limit: 10,
-        page: 1,
-        search: 'test1',
-      });
+      .set('Authorization', `Bearer ${adminToken}`)
+      .query({ page: 2 });
 
-    expect(res.statusCode).toBe(200);
-    expect(res.body.code).toBe(200);
+    expect(res.status).toBe(200);
     expect(res.body.message).toBe('Users found');
-    expect(res.body.data).toHaveLength(1);
+    expect(res.body.data.length).toBeGreaterThanOrEqual(5);
+    expect(res.body.meta.pageSize).toBe(10);
+    expect(res.body.meta.totalItems).toBeGreaterThanOrEqual(15);
+    expect(res.body.meta.currentPage).toBe(2);
+    expect(res.body.meta.totalPages).toBeGreaterThanOrEqual(2);
   });
 
-  it('should return 200 and empty data when no user matches the search query', async () => {
+  it('should return users when the search query matches', async () => {
     const res = await request(app)
       .get('/api/users')
-      .set('Authorization', `Bearer ${token}`)
-      .query({
-        limit: 10,
-        page: 1,
-        search: 'notexist',
-      });
+      .set('Authorization', `Bearer ${adminToken}`)
+      .query({ search: 'test10' });
 
-    expect(res.statusCode).toBe(200);
-    expect(res.body.message).toBe('No users found');
+      expect(res.statusCode).toBe(200);
+      expect(res.body.message).toBe('Users found');
+      expect(res.body.data).toHaveLength(1);
+      expect(res.body.meta.pageSize).toBe(10);
+      expect(res.body.meta.totalItems).toBe(1);
+      expect(res.body.meta.currentPage).toBe(1);
+      expect(res.body.meta.totalPages).toBe(1);
+  });
+
+  it('should return no permissions when search not found', async () => {
+    const res = await request(app)
+      .get('/api/users')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .query({ search: 'notexist' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.message).toBe('Users not found');
     expect(res.body.data).toHaveLength(0);
   });
 });
 
 describe('GET /api/users/:id', () => {
-  afterEach(async () => {
-    await removeTestUser();
+  it('should reject if unauthorized access', async () => {
+    const res = await request(app)
+      .get('/api/users')
+      .set('Authorization', `Bearer ${userToken}`);
+
+    expect(res.status).toBe(403);
+    expect(res.body.message).toBe('Permission denied');
   });
 
   it.each(cases)(
-    'should return $expectedStatus for user with $name',
+    'should reject if $name',
     async ({ id, expectedStatus, expectedMessage }) => {
       const res = await request(app)
         .get(`/api/users/${id}`)
-        .set('Authorization', `Bearer ${token}`);
+        .set('Authorization', `Bearer ${adminToken}`);
 
       expect(res.status).toBe(expectedStatus);
       expect(res.body.message).toBe(expectedMessage);
     }
   );
 
-  it('should return 200 and user for valid id', async () => {
+  it('should can get a user', async () => {
     const user = await createTestUser();
     const res = await request(app)
       .get(`/api/users/${user._id}`)
-      .set('Authorization', `Bearer ${token}`);
+      .set('Authorization', `Bearer ${adminToken}`);
 
     expect(res.status).toBe(200);
     expect(res.body.message).toBe('User found');
     expect(res.body.data).toBeDefined();
+
+    await removeTestUser();
   });
 });
 
 describe('POST /api/users', () => {
-  afterEach(async () => {
-    await removeTestUser();
+  let role;
+
+  beforeEach(async () => {
+    role = await createTestRole();
   });
 
-  it('should return 400 for invalid input', async () => {
+  afterEach(async () => {
+    await removeTestUser();
+    await removeTestRole();
+  });
+
+  it('should reject if unauthorized access', async () => {
     const res = await request(app)
       .post('/api/users')
-      .set('Authorization', `Bearer ${token}`)
-      .send();
+      .set('Authorization', `Bearer ${userToken}`);
+
+    expect(res.status).toBe(403);
+    expect(res.body.message).toBe('Permission denied');
+  });
+
+  it('should reject if request is invalid', async () => {
+    const res = await request(app)
+      .post('/api/users')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        username: '',
+        email: '',
+        password: '',
+      });
 
     expect(res.status).toBe(400);
     expect(res.body.message).toBe('Validation errors');
-    expect(res.body.errors.username).toBeDefined();
-    expect(res.body.errors.email).toBeDefined();
-    expect(res.body.errors.password).toBeDefined();
+    expect(res.body.errors.username).toEqual(expect.any(Array));
+    expect(res.body.errors.email).toEqual(expect.any(Array));
+    expect(res.body.errors.password).toEqual(expect.any(Array));
   });
 
-  it('should return 409 for duplicate email', async () => {
-    const user = await createTestUser();
+  it('should reject if email already exists', async () => {
+    await createTestUser();
+
     const res = await request(app)
       .post('/api/users')
-      .set('Authorization', `Bearer ${token}`)
+      .set('Authorization', `Bearer ${adminToken}`)
       .send({
-        username: 'test',
-        email: user.email,
+        username: 'test1',
+        email: 'test@me.com',
         password: 'test123',
-        roles: [adminRole._id],
+        roles: [role._id],
       });
 
     expect(res.status).toBe(409);
-    expect(res.body.message).toBe('Email already in use');
+    expect(res.body.message).toBe('Email already exists');
   });
 
-  it('should return 400 for invalid roles input', async () => {
+  it('should reject if username already exists', async () => {
+    await createTestUser();
+
     const res = await request(app)
       .post('/api/users')
-      .set('Authorization', `Bearer ${token}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        username: 'test',
+        email: 'test1@me.com',
+        password: 'test123',
+        roles: [role._id],
+      });
+
+    expect(res.status).toBe(409);
+    expect(res.body.message).toBe('Username already exists');
+  });
+
+  it('should reject if role id is invalid', async () => {
+    const res = await request(app)
+      .post('/api/users')
+      .set('Authorization', `Bearer ${adminToken}`)
       .send({
         username: 'test',
         email: 'test@me.com',
@@ -190,18 +250,18 @@ describe('POST /api/users', () => {
 
     expect(res.status).toBe(400);
     expect(res.body.message).toBe('Validation errors');
-    expect(res.body.errors.roles).toBeDefined();
+    expect(res.body.errors.roles).toEqual(expect.any(Array));
   });
 
-  it('should return 201 and created user for valid input', async () => {
+  it('should can create a user', async () => {
     const res = await request(app)
       .post('/api/users')
-      .set('Authorization', `Bearer ${token}`)
+      .set('Authorization', `Bearer ${adminToken}`)
       .send({
         username: 'test',
         email: 'test@me.com',
         password: 'test123',
-        roles: [adminRole._id],
+        roles: [role._id],
       });
 
     expect(res.status).toBe(201);
@@ -220,33 +280,43 @@ describe('PATCH /api/users/:id', () => {
     await removeTestUser();
   });
 
+  it('should reject if unauthorized access', async () => {
+    const res = await request(app)
+      .patch(`/api/users/${user._id}`)
+      .set('Authorization', `Bearer ${invalidToken}`);
+
+    expect(res.status).toBe(403);
+    expect(res.body.message).toBe('Permission denied');
+  });
+
   it.each(cases)(
-    'should return $expectedStatus for user with $name',
+    'should reject if $name',
     async ({ id, expectedStatus, expectedMessage }) => {
       const res = await request(app)
         .get(`/api/users/${id}`)
-        .set('Authorization', `Bearer ${token}`);
+        .set('Authorization', `Bearer ${adminToken}`);
 
       expect(res.status).toBe(expectedStatus);
       expect(res.body.message).toBe(expectedMessage);
     }
   );
 
-  it('should return 200 and updated user without changing avatar file', async () => {
+  it('should can update existing user without changing avatar', async () => {
     const res = await request(app)
       .patch(`/api/users/${user._id}`)
-      .set('Authorization', `Bearer ${token}`)
+      .set('Authorization', `Bearer ${adminToken}`)
       .set('Content-Type', 'multipart/form-data')
       .field('email', 'test1@me.com');
 
     expect(res.status).toBe(200);
     expect(res.body.message).toBe('User updated successfully');
+    expect(res.body.data.email).toBe('test1@me.com');
   });
 
-  it('should return 200 and updated user with changing avatar file', async () => {
+  it('should can update existing user with changing avatar', async () => {
     const res = await request(app)
       .patch(`/api/users/${user._id}`)
-      .set('Authorization', `Bearer ${token}`)
+      .set('Authorization', `Bearer ${adminToken}`)
       .set('Content-Type', 'multipart/form-data')
       .field('email', 'test1@me.com')
       .attach('avatar', testAvatarPath);
@@ -257,24 +327,19 @@ describe('PATCH /api/users/:id', () => {
     expect(avatarExists).toBe(true);
     expect(res.status).toBe(200);
     expect(res.body.message).toBe('User updated successfully');
+    expect(res.body.data.email).toBe('test1@me.com');
 
-    await fs.unlink(
-      path.join(
-        process.cwd(),
-        process.env.AVATAR_UPLOADS_DIR,
-        updatedUser.avatar
-      )
-    );
+    await removeUploadedFile('avatars', updatedUser.avatar);
   });
 
-  it('should return 200 and update user by changing avatar file and removing old non-default avatar', async () => {
+  it('Should can update existing user with changing avatar and remove old avatar', async () => {
     user.avatar = 'test-avatar.jpg';
     await user.save();
-    await copyFile(testAvatarPath, 'avatars');
+    await copyToUploadDir(testAvatarPath, 'avatars');
 
     const res = await request(app)
       .patch(`/api/users/${user._id}`)
-      .set('Authorization', `Bearer ${token}`)
+      .set('Authorization', `Bearer ${adminToken}`)
       .set('Content-Type', 'multipart/form-data')
       .field('email', 'test1@me.com')
       .attach('avatar', testAvatarPath);
@@ -287,14 +352,9 @@ describe('PATCH /api/users/:id', () => {
     expect(avatarExists).toBe(true);
     expect(res.status).toBe(200);
     expect(res.body.message).toBe('User updated successfully');
+    expect(res.body.data.email).toBe('test1@me.com');
 
-    await fs.unlink(
-      path.join(
-        process.cwd(),
-        process.env.AVATAR_UPLOADS_DIR,
-        updatedUser.avatar
-      )
-    );
+    await removeUploadedFile('avatars', updatedUser.avatar);
   });
 });
 
@@ -309,22 +369,31 @@ describe('DELETE /api/users/:id', () => {
     await removeTestUser();
   });
 
+  it('should reject if unauthorized access', async () => {
+    const res = await request(app)
+      .delete(`/api/users/${user._id}`)
+      .set('Authorization', `Bearer ${invalidToken}`);
+
+    expect(res.status).toBe(403);
+    expect(res.body.message).toBe('Permission denied');
+  });
+
   it.each(cases)(
-    'should return $expectedStatus for user with $name',
+    'should reject if $name',
     async ({ id, expectedStatus, expectedMessage }) => {
       const res = await request(app)
         .get(`/api/users/${id}`)
-        .set('Authorization', `Bearer ${token}`);
+        .set('Authorization', `Bearer ${adminToken}`);
 
       expect(res.status).toBe(expectedStatus);
       expect(res.body.message).toBe(expectedMessage);
     }
   );
 
-  it('should return 200 and deleted user without removing default avatar file', async () => {
+  it('Should can delete user without removing default avatar', async () => {
     const res = await request(app)
       .delete(`/api/users/${user._id}`)
-      .set('Authorization', `Bearer ${token}`);
+      .set('Authorization', `Bearer ${adminToken}`);
 
     const avatarExists = await fileExists('avatars', 'default.jpg');
 
@@ -333,14 +402,14 @@ describe('DELETE /api/users/:id', () => {
     expect(res.body.message).toBe('User deleted successfully');
   });
 
-  it('should return 200 and deleted user with removing avatar file', async () => {
+  it('should can delete user with removing avatar', async () => {
     user.avatar = 'test-avatar.jpg';
     user.save();
-    await copyFile(testAvatarPath, 'avatars');
+    await copyToUploadDir(testAvatarPath, 'avatars');
 
     const res = await request(app)
       .delete(`/api/users/${user._id}`)
-      .set('Authorization', `Bearer ${token}`);
+      .set('Authorization', `Bearer ${adminToken}`);
 
     const avatarExists = await fileExists('avatars', 'test-avatar.jpg');
 

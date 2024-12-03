@@ -1,21 +1,16 @@
-import {
-  createPermission,
-  getPermissions,
-  getPermissionById,
-  updatePermission,
-  deletePermission
-} from "../controllers/permissionController.js";
+import permissionController from "../controllers/permissionController.js";
 import authenticate from "../middlewares/authenticate.js";
 import authorize from "../middlewares/authorize.js";
+import queryHandler from "../middlewares/queryHandler.js";
 import express from "express";
 
 const router = express.Router();
 
 router.use(authenticate);
-router.post('/', authorize('create', 'permission'), createPermission);
-router.get('/', authorize('read', 'permission'), getPermissions);
-router.get('/:id', authorize('read', 'permission'), getPermissionById);
-router.put('/:id', authorize('update', 'permission'), updatePermission);
-router.delete('/:id', authorize('delete', 'permission'), deletePermission);
+router.post('/', authorize('create', 'permission'), permissionController.create);
+router.get('/', authorize('search', 'permission'), queryHandler, permissionController.search);
+router.get('/:id', authorize('show', 'permission'), permissionController.show);
+router.patch('/:id', authorize('update', 'permission'), permissionController.update);
+router.delete('/:id', authorize('remove', 'permission'), permissionController.remove);
 
 export default router;

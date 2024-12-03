@@ -3,9 +3,10 @@ import Permission from '../models/permissionModel.js';
 
 const seedRole = async () => {
   const permissions = await Permission.find();
-  const userPermissionsCriteria = {
-    user: ['read', 'update', 'delete'],
-    comment: ['create', 'update', 'delete'],
+  const userPermissions = {
+    user: ['show', 'update', 'remove'],
+    post: ['like'],
+    comment: ['create', 'update', 'remove'],
   };
   const roles = [
     { name: 'admin', permissions: [] },
@@ -17,7 +18,7 @@ const seedRole = async () => {
 
     roles[0].permissions.push(_id);
 
-    if (userPermissionsCriteria[resource]?.includes(action)) {
+    if (userPermissions[resource]?.includes(action)) {
       roles[1].permissions.push(_id);
     }
   }

@@ -1,4 +1,4 @@
-import postService from '../services/postService';
+import postService from '../services/postService.js';
 
 const create = async (req, res, next) => {
   try {
@@ -12,16 +12,14 @@ const create = async (req, res, next) => {
   }
 };
 
-const getAll = async (req, res, next) => {
+const search = async (req, res, next) => {
   try {
-    const { posts, totalPosts, totalPages, hasMore } = await postService.getAll(
-      req.queryOptions
-    );
+    const { posts, meta } = await postService.search(req.queryOptions);
 
     if (posts.length === 0) {
       return res.json({
         code: 200,
-        message: 'No posts found',
+        message: 'Posts not found',
         data: [],
       });
     }
@@ -30,22 +28,16 @@ const getAll = async (req, res, next) => {
       code: 200,
       message: 'Posts found',
       data: posts,
-      meta: {
-        pageSize: req.queryOptions.limit,
-        totalItems: totalPosts,
-        currentPage: req.queryOptions.page,
-        totalPages,
-        hasMore,
-      },
+      meta
     });
   } catch (e) {
     next(e);
   }
 };
 
-const getById = async (req, res, next) => {
+const show = async (req, res, next) => {
   try {
-    const post = await postService.getById(req.params.id);
+    const post = await postService.show(req.params.id, req);
     res.json({
       code: 200,
       message: 'Post found',
@@ -81,10 +73,36 @@ const remove = async (req, res, next) => {
   }
 };
 
+const like = async (req, res, next) => {
+  try {
+    const { totalLikes, isLiked } = await postService.like(req.params.id, req);
+
+    let message;
+
+    if(isLiked) {
+      message = 'Post liked successfully';
+    } else {
+      message = 'Post unliked successfully';
+    }
+
+    res.json({
+      code: 200,
+      message,
+      data: { 
+        totalLikes, 
+        isLiked 
+      },
+    })
+  } catch (e) {
+    next(e);
+  }
+};
+
 export default {
   create,
-  getAll,
-  getById,
+  search,
+  show,
   update,
   remove,
+  like,
 };

@@ -1,24 +1,17 @@
-import {
-  createComment,
-  getComments,
-  updateComment,
-  deleteComment,
-  likeComment,
-  unlikeComment
-} from '../controllers/commentController.js';
+import commentController from '../controllers/commentController.js';
 import express from 'express';
 import authorize from '../middlewares/authorize.js';
 import authenticate from '../middlewares/authenticate.js';
+import queryHandler from '../middlewares/queryHandler.js';
+import checkOwnership from '../middlewares/checkOwnership.js';
 
 const router = express.Router();
 
-router.get('/', getComments);
-
 router.use(authenticate);
-router.post('/:postId', authorize('create', 'comment'), createComment);
-router.put('/:postId/:commentId', authorize('update', 'comment'), updateComment);
-router.delete('/:postId/:commentId', authorize('delete', 'comment'), deleteComment);
-router.put('/:postId/:commentId/like', authorize('update', 'comment'), likeComment);
-router.put('/:postId/:commentId/unlike', authorize('update', 'comment'), unlikeComment);
+router.get('/', authorize('search', 'comment'), queryHandler, commentController.search);
+router.post('/', authorize('create', 'comment'), commentController.create);
+router.get('/:id', authorize('show', 'comment'), commentController.show);
+router.patch('/:id', authorize('update', 'comment'), checkOwnership('comment'), commentController.update);
+router.delete('/:id', authorize('remove', 'comment'), checkOwnership('comment'), commentController.remove);
 
 export default router;

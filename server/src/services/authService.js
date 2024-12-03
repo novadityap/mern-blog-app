@@ -23,22 +23,21 @@ const signup = async data => {
   );
 
   if (validationErrors) {
-    logger.warn(`signup - invalid request fields`);
+    logger.warn('validation errors');
     throw new ResponseError('Validation errors', 400, validationErrors);
   }
 
-  const existingUser = await User.findOne({ email: validatedFields.email });
-  if (existingUser) {
-    logger.warn(
-      `signup - user already exists with email ${validatedFields.email}`
-    );
+  const user = await User.findOne({ 
+    email: validatedFields.email,
+    username: validatedFields.username
+  });
+  if (user) {
+    logger.warn('user already exists');
     return;
   }
 
   let defaultRole = await Role.findOne({ name: 'user' });
-  if (!defaultRole) {
-    defaultRole = await Role.create({name: 'user'});
-  }
+  if (!defaultRole) defaultRole = await Role.create({name: 'user'});
 
   validatedFields.password = await bcrypt.hash(validatedFields.password, 10);
 
@@ -47,19 +46,17 @@ const signup = async data => {
     roles: [defaultRole._id],
   });
 
-  const html = await ejs.renderFile('./src/views/emailVerification.ejs', {
+  const html = await ejs.renderFile('./src/views/verifyEmail.ejs', {
     user: newUser,
-    url: `${process.env.CLIENT_URL}/email-verification/${newUser.verificationToken}`,
+    url: `${process.env.CLIENT_URL}/verify-email/${newUser.verificationToken}`,
   });
 
-  await sendMail(newUser.email, 'Email Verification', html);
-  logger.info(
-    `signup - email has been sent to ${validatedFields.email}`
-  );
+  await sendMail(newUser.email, 'Verify Email', html);
+  logger.info('verification email has been sent');
 };
 
-const emailVerification = async token => {
-  const updatedUser = await User.findOneAndUpdate(
+const verifyEmail = async token => {
+  const user = await User.findOneAndUpdate(
     {
       verificationToken: token,
       verificationTokenExpires: { $gt: Date.now() },
@@ -74,25 +71,23 @@ const emailVerification = async token => {
     }
   );
 
-  if (!updatedUser) {
-    logger.warn(`email verification - token is invalid or expired`);
+  if (!user) {
+    logger.warn('invalid verification token');
     throw new ResponseError('Invalid verification token', 401);
   }
 
-  logger.info(
-    `email verification - user is verified for email ${updatedUser.email}`
-  );
+  logger.info('email has been verified successfully');
 };
 
-const resendEmailVerification = async data => {
+const resendVerification = async data => {
   const { validatedFields, validationErrors } = validateSchema(verifyEmailSchema, data);
 
   if (validationErrors) {
-    logger.warn('resend email verification - invalid request fields');
+    logger.warn('validation errors');
     throw new ResponseError('Validation errors', 400, validationErrors)
   }
 
-  const updatedUser = await User.findOneAndUpdate(
+  const user = await User.findOneAndUpdate(
     {
       email: validatedFields.email,
       isVerified: false,
@@ -106,30 +101,25 @@ const resendEmailVerification = async data => {
     }
   );
 
-  if (!updatedUser) {
-    logger.warn(
-      `resend email verification - user is not registered with email ${validatedFields.email}`
-    );
-
+  if (!user) {
+    logger.warn('email is not registered');
     return;
   }
 
-  const html = await ejs.renderFile('./src/views/emailVerification.ejs', {
-    user: updatedUser,
-    url: `${process.env.CLIENT_URL}/email-verification/${updatedUser.verificationToken}`,
+  const html = await ejs.renderFile('./src/views/verifyEmail.ejs', {
+    user,
+    url: `${process.env.CLIENT_URL}/verify-email/${user.verificationToken}`,
   });
 
-  await sendMail(updatedUser.email, 'Email Verification', html);
-  logger.info(
-    `resend email verification - email has been sent to ${updatedUser.email}`
-  );
+  await sendMail(user.email, 'Verify Email', html);
+  logger.info('verification email has been sent');
 }
 
 const signin = async data => {
   const { validatedFields, validationErrors } = validateSchema(signinSchema, data);
 
   if (validationErrors) {
-    logger.warn('signin - invalid request fields');
+    logger.warn('validation errors');
     throw new ResponseError('Validation errors', 400, validationErrors)
   }
 
@@ -142,16 +132,13 @@ const signin = async data => {
     });
 
   if (!user) {
-    logger.warn('signin - user is not registered');
+    logger.warn('invalid email or password');
     throw new ResponseError('Invalid email or password', 401);
   }
 
   const isMatch = await bcrypt.compare(validatedFields.password, user.password);
-
   if (!isMatch) {
-    logger.warn(
-      `signin - password is not matched from user email ${validatedFields.email}`
-    );
+    logger.warn('invalid email or password');
     throw new ResponseError('Invalid email or password', 401);
   }
 
@@ -167,6 +154,7 @@ const signin = async data => {
   const token = jwt.sign(
     { 
       id: user._id,
+      username: user.username,
       roles
     }, 
     process.env.JWT_SECRET, 
@@ -176,6 +164,7 @@ const signin = async data => {
   const refreshToken = jwt.sign(
     { 
       id: user._id,
+      username: user.username,
       roles
     },
     process.env.JWT_REFRESH_SECRET,
@@ -185,7 +174,7 @@ const signin = async data => {
   user.refreshToken = refreshToken;
   await user.save();
 
-  logger.info(`signin - user logged in with email ${user.email}`);
+  logger.info('user signed in successfully');
 
   return {
     token,
@@ -198,49 +187,44 @@ const signin = async data => {
 
 const signout = async refreshToken => {
   if (!refreshToken) {
-    logger.warn('signout - refresh token is not provided');
-    throw new ResponseError('Invalid refresh token', 401);
+    logger.warn('refresh token is missing');
+    throw new ResponseError('Token is missing', 401);
   }
   
-  const updatedUser = await User.findOneAndUpdate(
+  const user = await User.findOneAndUpdate(
     { refreshToken },
     { refreshToken: null },
     { new: true }
   );
 
-  if (!updatedUser) {
-    logger.warn('signout - refresh token not found in database');
-    throw new ResponseError('Invalid refresh token', 401);
+  if (!user) {
+    logger.warn('refresh token not found');
+    throw new ResponseError('Invalid token', 401);
   }
 
   await Blacklist.create({ token: refreshToken });
-
-  logger.info(
-    `signout - user loggout successfully with email ${updatedUser.email}`
-  );
+  logger.info('user signed out successfully');
 }
 
 const refreshToken = async refreshToken => {
   if (!refreshToken) {
-    logger.warn('refresh token - token is not provided');
-    throw new ResponseError('Invalid refresh token', 401);
+    logger.warn('refresh token is missing');
+    throw new ResponseError('Token is missing', 401);
   }
 
   const blacklistedToken = await Blacklist.findOne({ token: refreshToken });
 
   if (blacklistedToken) {
-    logger.warn(
-      `refresh token - token ${refreshToken} has been blacklisted`
-    );
-    throw new ResponseError('Invalid refresh token', 401);
+    logger.warn('refresh token is blacklisted');
+    throw new ResponseError('Invalid token', 401);
   }
 
   const user = await User.findOne({ refreshToken })
     .populate('roles');
 
   if (!user) {
-    logger.warn('refresh token - refresh token not found in database');
-    throw new ResponseError('Invalid refresh token', 401);
+    logger.warn('refresh token not found');
+    throw new ResponseError('Invalid token', 401);
   }
 
   jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET);
@@ -249,6 +233,7 @@ const refreshToken = async refreshToken => {
   const newToken = jwt.sign(
     {
       id: user._id,
+      username: user.username,
       roles,
     },
     process.env.JWT_SECRET,
@@ -257,10 +242,7 @@ const refreshToken = async refreshToken => {
     }
   );
 
-  logger.info(
-    `refresh token - new access token has been generated for email ${user._id}`
-  );
-
+  logger.info('refresh token has been refreshed successfully');
   return newToken;
 }
 
@@ -271,7 +253,7 @@ const requestResetPassword = async data => {
   );
 
   if (validationErrors) {
-    logger.warn('request reset password - invalid request fields');
+    logger.warn('validation errors');
     throw new ResponseError('Validation errors', 400, validationErrors);
   }
 
@@ -281,23 +263,21 @@ const requestResetPassword = async data => {
   });
 
   if (!user) {
-    logger.warn('request reset password - user is not registered');
+    logger.warn('email is not registered');
     return;
   }
 
   user.resetToken = crypto.randomBytes(32).toString('hex');
   user.resetTokenExpires = Date.now() + (1 * 60 * 60 * 1000);
   const html = await ejs.renderFile('./src/views/resetPassword.ejs', {
-    user: user,
+    user,
     url: `${process.env.CLIENT_URL}/reset-password/${user.resetToken}`,
   });
 
   await sendMail(user.email, 'Reset Password', html);
   await user.save();
 
-  logger.info(
-    `request reset password - email has been sent to ${user.email}`
-  );
+  logger.info('reset password email has been sent');
 }
 
 const resetPassword = async (data, token) => {
@@ -307,7 +287,7 @@ const resetPassword = async (data, token) => {
   );
 
   if (validationErrors) {
-    logger.warn('reset password - invalid request fields');
+    logger.warn('validation errors');
     throw new ResponseError('validation errors', 400, validationErrors);
   }
 
@@ -317,25 +297,22 @@ const resetPassword = async (data, token) => {
   });
 
   if (!user) {
-    logger.warn(`reset password - token is invalid or has expired}`);
+    logger.warn('invalid reset token');
     throw new ResponseError('Invalid reset token', 401);
   }
 
   user.password = await bcrypt.hash(validatedFields.newPassword, 10);
   user.resetToken = null;
   user.resetTokenExpires = null;
-
   await user.save();
 
-  logger.info(
-    `reset password - password has been reset for email ${user.email}`
-  );
+  logger.info('password has been reset successfully');
 }
 
 export default { 
   signup,
-  emailVerification,
-  resendEmailVerification,
+  verifyEmail,
+  resendVerification,
   signin,
   signout,
   refreshToken,

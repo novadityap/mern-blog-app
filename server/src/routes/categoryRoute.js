@@ -1,21 +1,17 @@
-import {
-  createCategory,
-  getCategories,
-  getCategoryById,
-  updateCategory,
-  deleteCategory,
-} from '../controllers/categoryController.js';
+import categoryController from '../controllers/categoryController.js';
 import express from 'express';
 import authenticate from '../middlewares/authenticate.js';
 import authorize from '../middlewares/authorize.js';
+import queryHandler from '../middlewares/queryHandler.js';
 
 const router = express.Router();
 
-router.get('/', getCategories);
-router.get('/:id', getCategoryById);
+router.get('/', queryHandler, categoryController.search);
+router.get('/:id', categoryController.show);
+
 router.use(authenticate);
-router.post('/', authorize('create', 'category'), createCategory);
-router.put('/:id', authorize('update', 'category'), updateCategory);
-router.delete('/:id', authorize('delete', 'category'), deleteCategory);
+router.post('/', authorize('create', 'category'), categoryController.create);
+router.patch('/:id', authorize('update', 'category'), categoryController.update);
+router.delete('/:id', authorize('remove', 'category'), categoryController.remove);
 
 export default router;

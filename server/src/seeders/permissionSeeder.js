@@ -1,30 +1,21 @@
 import Permission from '../models/permissionModel.js';
 
 const seedPermission = async () => {
-  const resources = [
-    'permission',
-    'role',
-    'user',
-    'post',
-    'comment',
-    'category',
-    'dashboard',
-  ];
-  const actions = ['create', 'read', 'update', 'delete'];
-
-  const exceptions = {
-    post: ['read'],
-    dashboard: ['create', 'update', 'delete'],
+  const resources = {
+    permission: ['show', 'search', 'create', 'update', 'remove'],
+    role: ['show', 'search', 'create', 'update', 'remove'],
+    user: ['show', 'search', 'create', 'update', 'remove'],
+    post: ['show', 'search', 'create', 'update', 'remove', 'like'],
+    comment: ['show', 'search', 'list', 'create', 'update', 'remove'],
+    category: ['show', 'search', 'create', 'update', 'remove'],
+    dashboard: ['stats'],
   };
 
-  const permissions = resources.flatMap(resource =>
-    actions
-      .filter(action => !(exceptions[resource] || []).includes(action))
-      .map(action => ({
-        action,
-        resource,
-        description: `permission to ${action} ${resource}`,
-      }))
+  const permissions = Object.entries(resources).flatMap(([resource, actions]) =>
+    actions.map(action => ({
+      action,
+      resource,
+    }))
   );
 
   await Permission.deleteMany({});

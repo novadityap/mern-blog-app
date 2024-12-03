@@ -11,6 +11,7 @@ import {
 import * as fs from 'node:fs/promises';
 import validateObjectId from '../utils/validateObjectId.js';
 import path from 'node:path';
+import jwt from 'jsonwebtoken';
 
 const create = async request => {
   const { validatedFiles, validatedFields, validationErrors } =
@@ -20,15 +21,13 @@ const create = async request => {
     });
 
   if (validationErrors) {
-    logger.warn('create post - invalid request fields');
+    logger.warn('validation errors');
     throw new ResponseError('Validation errors', 400, validationErrors);
   }
 
   const category = await Category.findById(validatedFields.category);
   if (!category) {
-    logger.warn(
-      `create post - category with id ${validatedFields.category} is not found`
-    );
+    logger.warn('category not found');
     throw new ResponseError('Category not found', 404);
   }
 
@@ -43,20 +42,20 @@ const create = async request => {
     userId: request.user.id,
   });
 
-  logger.info('create post - post created successfully');
+  logger.info('post created successfully');
 };
 
 const update = async (id, request) => {
   if (!validateObjectId(id)) {
-    logger.warn(`update post - invalid or malformed post id ${id}`);
-    throw new ResponseError('Invalid post id', 400, {
-      id: ['Invalid or malformed post id'],
+    logger.warn('validation errors');
+    throw new ResponseError('Validation errors', 400, {
+      id: ['Invalid post id'],
     });
   }
 
   const post = await Post.findById(id);
   if (!post) {
-    logger.warn(`update post failed - post not found with id ${id}`);
+    logger.warn('post not found');
     throw new ResponseError('Post not found', 404);
   }
 
@@ -67,15 +66,13 @@ const update = async (id, request) => {
     });
 
   if (validationErrors) {
-    logger.warn('update post - invalid request fields');
+    logger.warn('validation errors');
     throw new ResponseError('Validation errors', 400, validationErrors);
   }
 
   const category = await Category.findById(validatedFields.category);
   if (!category) {
-    logger.warn(
-      `update post - category with id ${validatedFields.category} is not found`
-    );
+    logger.warn('category not found');
     throw new ResponseError('Category not found', 404);
   }
 
@@ -87,23 +84,23 @@ const update = async (id, request) => {
     }
 
     post.postImage = validatedFiles[0].newFilename;
-    logger.info(
-      `update post - image from post id ${post._id} successfully updated`
-    );
+    logger.info('post image updated successfully');
   }
 
   Object.assign(post, validatedFields);
   await post.save();
 
-  logger.info(`update post - post updated with id ${id}`);
+  logger.info('post updated successfully');
   return post;
 };
 
-const getById = async id => {
+const show = async (id, request) => {
+  const token = request.headers.authorization?.replace('Bearer ', '');
+
   if (!validateObjectId(id)) {
-    logger.warn(`fetch post - invalid or malformed post id ${id}`);
-    throw new ResponseError('Invalid post id', 400, {
-      id: ['Invalid or malformed post id'],
+    logger.warn('validation errors');
+    throw new ResponseError('Validation errors', 400, {
+      id: ['Invalid post id'],
     });
   }
 
@@ -119,15 +116,20 @@ const getById = async id => {
     .populate('category');
 
   if (!post) {
-    logger.warn(`fetch post - post not found with id ${id}`);
+    logger.warn('post not found');
     throw new ResponseError('Post not found', 404);
   }
 
-  logger.info(`fetch post - post found with id ${id}`);
+  if (token) {
+    const currentUser = jwt.verify(token, process.env.JWT_SECRET);
+    post.isLiked = post.likes.includes(currentUser.id) ?? false;
+  }
+
+  logger.info('post found');
   return post;
 };
 
-const getAll = async options => {
+const search = async options => {
   const { page, limit, search, filters, skip } = options;
   const filter = { ...filters };
 
@@ -150,30 +152,34 @@ const getAll = async options => {
     .populate('category');
 
   if (posts.length === 0) {
-    logger.warn('fetch posts - no posts found in database');
+    logger.warn('posts not found');
   } else {
-    logger.info(`fetch posts - ${posts.length} posts found`);
+    logger.info('posts found');
   }
 
   return {
     posts,
-    totalPosts,
-    totalPages,
-    hasMore,
+    meta: {
+      currentPage: page,
+      totalPages,
+      pageSize: limit,
+      totalItems: totalPosts,
+      hasMore,
+    },
   };
 };
 
 const remove = async id => {
   if (!validateObjectId(id)) {
-    logger.warn(`delete post - invalid or malformed post id ${id}`);
-    throw new ResponseError('Invalid post id', 400, {
-      id: ['Invalid or malformed post id'],
+    logger.warn('validation errors');
+    throw new ResponseError('Validation errors', 400, {
+      id: ['Invalid post id'],
     });
   }
 
   const post = await Post.findById(id);
   if (!post) {
-    logger.warn(`delete post - post not found with id ${id}`);
+    logger.warn('post not found');
     throw new ResponseError('Post not found', 404);
   }
 
@@ -181,19 +187,59 @@ const remove = async id => {
     await fs.unlink(
       path.join(process.cwd(), process.env.POST_UPLOADS_DIR, post.postImage)
     );
-    logger.info(
-      `delete post - image from post id ${post._id} successfully deleted`
-    );
+    logger.info('post image deleted successfully');
   }
 
   await post.deleteOne();
-  logger.info(`delete post - post successfully deleted with id ${id}`);
+  logger.info('post deleted successfully');
+};
+
+const like = async (id, request) => {
+  if (!validateObjectId(id)) {
+    logger.warn('validation errors');
+    throw new ResponseError('Validation errors', 400, {
+      id: ['Invalid post id'],
+    });
+  }
+
+  const post = await Post.findById(id);
+  if (!post) {
+    logger.warn('post not found');
+    throw new ResponseError('Post not found', 404);
+  }
+
+  console.log(post)
+  console.log(request.user)
+  let isLiked = post.likes.includes(request.user.id);
+  console.log(isLiked)
+  if (isLiked) {
+    post.likes.pull(request.user.id);
+    post.totalLikes -= 1;
+    isLiked = false;
+
+    logger.info('post unliked successfully');
+  } else {
+    post.likes.push(request.user.id);
+    post.totalLikes += 1;
+    isLiked = true;
+    
+    logger.info('post liked successfully');
+  }
+
+  console.log(post)
+  console.log(isLiked)
+  await post.save();
+  return { 
+    totalLikes: post.totalLikes,
+    isLiked
+  };
 };
 
 export default {
   create,
   update,
-  getById,
-  getAll,
+  show,
+  search,
   remove,
+  like,
 };

@@ -1,7 +1,7 @@
 import Joi from 'joi';
 
 const nameSchema = Joi.string().required();
-const permissionsSchema = Joi.array().items(Joi.string()).required(); 
+const permissionsSchema = Joi.array().items(Joi.string()).min(1).required(); 
 
 const baseRoleSchema = Joi.object({
   name: nameSchema,

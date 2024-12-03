@@ -1,21 +1,16 @@
-import {
-  createRole,
-  getRoles, 
-  getRoleById,
-  updateRole,
-  deleteRole
-} from '../controllers/roleController.js';
+import roleController from '../controllers/roleController.js';
 import express from 'express';
 import authorize from '../middlewares/authorize.js';
 import authenticate from '../middlewares/authenticate.js';
+import queryHandler from '../middlewares/queryHandler.js';
 
 const router = express.Router();
 
 router.use(authenticate);
-router.post('/', authorize('create', 'role'), createRole);
-router.get('/', authorize('read', 'role'), getRoles);
-router.get('/:id', authorize('read', 'role'), getRoleById);
-router.put('/:id', authorize('update', 'role'), updateRole);
-router.delete('/:id', authorize('delete', 'role'), deleteRole);
+router.post('/', authorize('create', 'role'), roleController.create);
+router.get('/', authorize('search', 'role'), queryHandler, roleController.search);
+router.get('/:id', authorize('show', 'role'), roleController.show);
+router.patch('/:id', authorize('update', 'role'), roleController.update);
+router.delete('/:id', authorize('remove', 'role'), roleController.remove);
 
 export default router;

@@ -13,8 +13,8 @@ import path from 'path';
 import * as fs from 'node:fs/promises';
 import validateObjectId from '../utils/validateObjectId.js';
 
-const getAll = async options => {
-  const { limit, search, skip } = options;
+const search = async options => {
+  const { limit, search, skip, page } = options;
   const filter = {};
 
   if (search) {
@@ -36,29 +36,37 @@ const getAll = async options => {
     .populate('roles', 'name');
 
   if (users.length === 0) {
-    logger.info(`fetch users - no users found in database`);
+    logger.info('users not found');
   } else {
-    logger.info(`fetch users - ${users.length} users found`);
+    logger.info('users found');
   }
 
-  return { users, totalUsers, totalPages };
+  return {
+    users,
+    meta: {
+      currentPage: page,
+      totalPages,
+      pageSize: limit,
+      totalItems: totalUsers,
+    },
+  };
 };
 
-const getById = async id => {
+const show = async id => {
   if (!validateObjectId(id)) {
-    logger.warn(`fetch user - invalid or malformed user id ${id}`);
-    throw new ResponseError('Invalid id', 400, {
-      id: ['Invalid or malformed user id'],
+    logger.warn('validation errors');
+    throw new ResponseError('Validation errors', 400, {
+      id: ['Invalid user id'],
     });
   }
 
   const user = await User.findById(id).populate('roles');
   if (!user) {
-    logger.warn(`fetch user - user not found with id ${id}`);
+    logger.warn('user not found');
     throw new ResponseError('User not found', 404);
   }
 
-  logger.info(`fetch user - user found with id ${id}`);
+  logger.info('user found');
   return user;
 };
 
@@ -69,17 +77,21 @@ const create = async data => {
   );
 
   if (validationErrors) {
-    logger.warn('create user - invalid request fields');
+    logger.warn('validation errors');
     throw new ResponseError('Validation errors', 400, validationErrors);
   }
 
-  const existingUser = await User.findOne({ email: validatedFields.email });
+  const existingUser = await User.findOne({
+    $or : [
+      { username: validatedFields.username },
+      { email: validatedFields.email }
+    ]
+  });
 
   if (existingUser) {
-    logger.warn(
-      `create user - user already exists with email ${validatedFields.email}`
-    );
-    throw new ResponseError('Email already in use', 409);
+    const conflictField = existingUser.username === validatedFields.username ? 'username' : 'email';
+    logger.warn(`${conflictField} already exists`);
+    throw new ResponseError(`${conflictField.charAt(0).toUpperCase() + conflictField.slice(1)} already exists`, 409);
   }
 
   const roles = await Role.find({
@@ -87,9 +99,9 @@ const create = async data => {
   });
 
   if (roles.length !== validatedFields.roles.length) {
-    logger.warn(`create user - some of the roles is invalid`);
+    logger.warn('validation errors');
     throw new ResponseError('Validation errors', 400, {
-      roles: ['Some of the roles is invalid'],
+      roles: ['Invalid role id'],
     });
   }
 
@@ -101,34 +113,31 @@ const create = async data => {
     verificationTokenExpires: null,
   });
 
-  logger.info(
-    `create user - user successfully created with email ${validatedFields.email}`
-  );
+  logger.info('user created successfully');
 };
 
 const update = async (id, request) => {
   if (!validateObjectId(id)) {
-    logger.warn(`update user - invalid or malformed user id ${id}`);
-    throw new ResponseError('Invalid id', 400, {
-      id: ['Invalid or malformed user id'],
+    logger.warn('validation errors');
+    throw new ResponseError('Validation errors', 400, {
+      id: ['Invalid user id'],
     });
   }
 
-  
   const user = await User.findById(id);
   if (!user) {
-    logger.warn(`update user - user not found with id ${id}`);
+    logger.warn('user not found');
     throw new ResponseError('User not found', 404);
   }
-  
+
   const { validatedFiles, validatedFields, validationErrors } =
-  await uploadAndValidate(request, {
-    fieldname: 'avatar',
-    formSchema: updateUserSchema,
-  });
+    await uploadAndValidate(request, {
+      fieldname: 'avatar',
+      formSchema: updateUserSchema,
+    });
 
   if (validationErrors) {
-    logger.warn('update user - invalid request fields');
+    logger.warn('validation errors');
     throw new ResponseError('Validation errors', 400, validationErrors);
   }
 
@@ -139,12 +148,9 @@ const update = async (id, request) => {
   });
 
   if (existingUser) {
-    logger.warn(
-      `update user - user already exists with email ${validatedFields.email}`
-    );
-    throw new ResponseError('Email already in use', 409);
+    logger.warn('email already exists');
+    throw new ResponseError('Email already exists', 409);
   }
-
 
   if (validatedFiles) {
     if (user.avatar !== 'default.jpg') {
@@ -154,7 +160,7 @@ const update = async (id, request) => {
     }
 
     user.avatar = validatedFiles[0].newFilename;
-    logger.info(`update user - avatar from user id ${user._id} successfully updated`);
+    logger.info('avatar updated successfully');
   }
 
   if (validatedFields.password) {
@@ -164,36 +170,38 @@ const update = async (id, request) => {
   Object.assign(user, validatedFields);
   await user.save();
 
-  logger.info(`update user - user successfully updated with id ${user._id}`);
+  logger.info('user updated successfully');
   return user;
 };
 
 const remove = async id => {
   if (!validateObjectId(id)) {
-    logger.info(`delete user - invalid or malformed user id ${id}`);
-    throw new ResponseError('Invalid id', 400, {
-      id: ['Invalid or malformed user id'],
+    logger.info('validation errors');
+    throw new ResponseError('Validation errors', 400, {
+      id: ['Invalid user id'],
     });
   }
 
   const user = await User.findById(id);
   if (!user) {
-    logger.warn(`delete user - user not found with id ${id}`);
+    logger.warn('user not found');
     throw new ResponseError('User not found', 404);
   }
 
   if (user.avatar !== 'default.jpg') {
-    await fs.unlink(path.join(process.cwd(), process.env.AVATAR_UPLOADS_DIR, user.avatar));
-    logger.info(`delete user - avatar from user id ${user._id} successfully deleted`);
+    await fs.unlink(
+      path.join(process.cwd(), process.env.AVATAR_UPLOADS_DIR, user.avatar)
+    );
+    logger.info('avatar deleted successfully');
   }
 
   await user.deleteOne();
-  logger.info(`delete user - user successfully deleted with id ${user._id}`);
+  logger.info('user deleted successfully');
 };
 
 export default {
-  getAll,
-  getById,
+  search,
+  show,
   create,
   update,
   remove,

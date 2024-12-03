@@ -1,8 +1,8 @@
-import userService from '../services/userService';
+import userService from '../services/userService.js';
 
-const getById = async (req, res, next) => {
+const show = async (req, res, next) => {
   try {
-    const user = await userService.getById(req.params.id);
+    const user = await userService.show(req.params.id);
     res.json({
       code: 200,
       message: 'User found',
@@ -13,16 +13,14 @@ const getById = async (req, res, next) => {
   }
 };
 
-const getAll = async (req, res, next) => {
+const search = async (req, res, next) => {
   try {
-    const { users, totalUsers, totalPages } = await userService.getAll(
-      req.queryOptions
-    );
+    const { users, meta } = await userService.search(req.queryOptions);
 
     if (users.length === 0) {
       return res.json({
         code: 200,
-        message: 'No users found',
+        message: 'Users not found',
         data: [],
       });
     }
@@ -31,12 +29,7 @@ const getAll = async (req, res, next) => {
       code: 200,
       message: 'Users found',
       data: users,
-      meta: {
-        pageSize: req.queryOptions.limit,
-        totalItems: totalUsers,
-        currentPage: req.queryOptions.page,
-        totalPages,
-      },
+      meta,
     });
   } catch (e) {
     next(e);
@@ -81,8 +74,8 @@ const remove = async (req, res, next) => {
 };
 
 export default {
-  getById,
-  getAll,
+  show,
+  search,
   create,
   update,
   remove,

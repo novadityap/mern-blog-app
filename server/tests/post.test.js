@@ -4,26 +4,27 @@ import seedRole from '../src/seeders/roleSeeder.js';
 import seedPermission from '../src/seeders/permissionSeeder.js';
 import Role from '../src/models/roleModel.js';
 import Permission from '../src/models/permissionModel.js';
+import jwt from 'jsonwebtoken';
 import app from '../src/app.js';
 import request from 'supertest';
 import path from 'node:path';
 import {
-  createAuthToken,
+  createToken,
   createTestPost,
   removeTestPost,
   getTestPost,
   createTestCategory,
   removeTestCategory,
   createManyTestPosts,
-  removeAllTestPosts,
   fileExists,
-  removeFile,
-  copyFile,
+  removeUploadedFile,
+  copyToUploadDir,
+  createManyTestComments,
+  removeTestComment,
 } from './testUtil.js';
 
-const invalidId = undefined;
-const missingId = new mongoose.Types.ObjectId();
-const token = createAuthToken('auth');
+const adminToken = createToken('auth', 'admin');
+const userToken = createToken('auth', 'user');
 const testPostImagePath = path.join(
   process.cwd(),
   'tests/uploads/posts',
@@ -31,14 +32,14 @@ const testPostImagePath = path.join(
 );
 const cases = [
   {
-    name: 'invalid post id',
-    id: invalidId,
+    name: 'post id is invalid',
+    id: 'invalid',
     expectedStatus: 400,
-    expectedMessage: 'Invalid post id',
+    expectedMessage: 'Validation errors',
   },
   {
-    name: 'missing post id',
-    id: missingId,
+    name: 'post not found',
+    id: new mongoose.Types.ObjectId(),
     expectedStatus: 404,
     expectedMessage: 'Post not found',
   },
@@ -51,8 +52,8 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await Role.deleteMany({});
-  await Permission.deleteMany({});
+  await Role.deleteMany();
+  await Permission.deleteMany();
   await mongoose.connection.close();
 });
 
@@ -62,79 +63,92 @@ describe('GET /api/posts', () => {
   });
 
   afterEach(async () => {
-    await removeAllTestPosts();
+    await removeTestPost();
   });
 
-  it('should return 200 and fetch all posts without search query', async () => {
+  it('should can search without parameter', async () => {
     const res = await request(app)
       .get('/api/posts')
-      .set('Authorization', `Bearer ${token}`)
-      .query({
-        page: 1,
-        limit: 2,
-      });
+      .set('Authorization', `Bearer ${adminToken}`);
 
     expect(res.status).toBe(200);
     expect(res.body.message).toBe('Posts found');
-    expect(res.body.data).toHaveLength(2);
-    expect(res.body.meta.pageSize).toBe(2);
+    expect(res.body.data).toHaveLength(10);
+    expect(res.body.meta.pageSize).toBe(10);
+    expect(res.body.meta.totalItems).toBe(15);
     expect(res.body.meta.currentPage).toBe(1);
+    expect(res.body.meta.totalPages).toBe(2);
   });
 
-  it('should return 200 and fetch posts with search query matching title', async () => {
+  it('should can search to page 2', async () => {
     const res = await request(app)
       .get('/api/posts')
-      .set('Authorization', `Bearer ${token}`)
-      .query({
-        limit: 10,
-        page: 1,
-        search: 'test1',
-      });
+      .set('Authorization', `Bearer ${adminToken}`)
+      .query({ page: 2 });
+
+    expect(res.status).toBe(200);
+    expect(res.body.message).toBe('Posts found');
+    expect(res.body.data).toHaveLength(5);
+    expect(res.body.meta.pageSize).toBe(10);
+    expect(res.body.meta.totalItems).toBe(15);
+    expect(res.body.meta.currentPage).toBe(2);
+    expect(res.body.meta.totalPages).toBe(2);
+  });
+
+  it('should return categories when the search query matches', async () => {
+    const res = await request(app)
+      .get('/api/posts')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .query({ search: 'test10' });
 
     expect(res.statusCode).toBe(200);
-    expect(res.body.code).toBe(200);
     expect(res.body.message).toBe('Posts found');
     expect(res.body.data).toHaveLength(1);
+    expect(res.body.meta.pageSize).toBe(10);
+    expect(res.body.meta.totalItems).toBe(1);
+    expect(res.body.meta.currentPage).toBe(1);
+    expect(res.body.meta.totalPages).toBe(1);
   });
 
-  it('should return 200 and empty data when no post matches the search query', async () => {
+  it('should return no categories when search not found', async () => {
     const res = await request(app)
       .get('/api/posts')
-      .set('Authorization', `Bearer ${token}`)
-      .query({
-        limit: 10,
-        page: 1,
-        search: 'notexist',
-      });
+      .set('Authorization', `Bearer ${adminToken}`)
+      .query({ search: 'notexist' });
 
-    expect(res.statusCode).toBe(200);
-    expect(res.body.message).toBe('No posts found');
+    expect(res.status).toBe(200);
+    expect(res.body.message).toBe('Posts not found');
     expect(res.body.data).toHaveLength(0);
   });
 });
 
 describe('GET /api/posts/:id', () => {
+  let post;
+
+  beforeEach(async () => {
+    post = await createTestPost();
+  });
+
   afterEach(async () => {
     await removeTestPost();
   });
 
   it.each(cases)(
-    'should return $expectedStatus for post with $name',
+    'should reject if $name',
     async ({ id, expectedStatus, expectedMessage }) => {
       const res = await request(app)
         .get(`/api/posts/${id}`)
-        .set('Authorization', `Bearer ${token}`);
+        .set('Authorization', `Bearer ${adminToken}`);
 
       expect(res.status).toBe(expectedStatus);
       expect(res.body.message).toBe(expectedMessage);
     }
   );
 
-  it('should return 200 and post for valid id', async () => {
-    const post = await createTestPost();
+  it('should can get a post', async () => {
     const res = await request(app)
       .get(`/api/posts/${post._id}`)
-      .set('Authorization', `Bearer ${token}`);
+      .set('Authorization', `Bearer ${adminToken}`);
 
     expect(res.status).toBe(200);
     expect(res.body.message).toBe('Post found');
@@ -154,10 +168,19 @@ describe('POST /api/posts', () => {
     await removeTestCategory();
   });
 
-  it('should return 400 for invalid input', async () => {
+  it('should reject if unauthorized access', async () => {
     const res = await request(app)
       .post('/api/posts')
-      .set('Authorization', `Bearer ${token}`)
+      .set('Authorization', `Bearer ${userToken}`);
+
+    expect(res.status).toBe(403);
+    expect(res.body.message).toBe('Permission denied');
+  });
+
+  it('should reject if request is invalid', async () => {
+    const res = await request(app)
+      .post('/api/posts')
+      .set('Authorization', `Bearer ${adminToken}`)
       .set('Content-Type', 'multipart/form-data');
 
     expect(res.status).toBe(400);
@@ -167,23 +190,23 @@ describe('POST /api/posts', () => {
     expect(res.body.errors.category).toBeDefined();
   });
 
-  it('should return 404 for not exists category', async () => {
+  it('should reject if category not found', async () => {
     const res = await request(app)
       .post('/api/posts')
-      .set('Authorization', `Bearer ${token}`)
+      .set('Authorization', `Bearer ${adminToken}`)
       .set('Content-Type', 'multipart/form-data')
       .field('title', 'test')
       .field('content', 'test')
-      .field('category', missingId.toString());
+      .field('category', new mongoose.Types.ObjectId().toString());
 
     expect(res.status).toBe(404);
     expect(res.body.message).toBe('Category not found');
   });
 
-  it('should return 201 and created post without image', async () => {
+  it('should can create post without image', async () => {
     const res = await request(app)
       .post('/api/posts')
-      .set('Authorization', `Bearer ${token}`)
+      .set('Authorization', `Bearer ${adminToken}`)
       .set('Content-Type', 'multipart/form-data')
       .field('title', 'test')
       .field('content', 'test')
@@ -193,10 +216,10 @@ describe('POST /api/posts', () => {
     expect(res.body.message).toBe('Post created successfully');
   });
 
-  it('should return 201 and created post with image', async () => {
+  it('should can create post with image', async () => {
     const res = await request(app)
       .post('/api/posts')
-      .set('Authorization', `Bearer ${token}`)
+      .set('Authorization', `Bearer ${adminToken}`)
       .set('Content-Type', 'multipart/form-data')
       .field('title', 'test')
       .field('content', 'test')
@@ -210,7 +233,7 @@ describe('POST /api/posts', () => {
     expect(res.body.message).toBe('Post created successfully');
     expect(postImageExists).toBe(true);
 
-    await removeFile('posts', post.postImage);
+    await removeUploadedFile('posts', post.postImage);
   });
 });
 
@@ -227,12 +250,21 @@ describe('PATCH /api/posts/:id', () => {
     await removeTestPost();
   });
 
+  it('should reject if unauthorized access', async () => {
+    const res = await request(app)
+      .patch(`/api/posts/${post._id}`)
+      .set('Authorization', `Bearer ${userToken}`);
+
+    expect(res.status).toBe(403);
+    expect(res.body.message).toBe('Permission denied');
+  });
+
   it.each(cases)(
-    'should return $expectedStatus for post with $name',
+    'should reject if $name',
     async ({ id, expectedStatus, expectedMessage }) => {
       const res = await request(app)
         .patch(`/api/posts/${id}`)
-        .set('Authorization', `Bearer ${token}`)
+        .set('Authorization', `Bearer ${adminToken}`)
         .set('Content-Type', 'multipart/form-data');
 
       expect(res.status).toBe(expectedStatus);
@@ -240,10 +272,10 @@ describe('PATCH /api/posts/:id', () => {
     }
   );
 
-  it('should return 400 for invalid input', async () => {
+  it('should reject if request is invalid', async () => {
     const res = await request(app)
       .patch(`/api/posts/${post._id}`)
-      .set('Authorization', `Bearer ${token}`)
+      .set('Authorization', `Bearer ${adminToken}`)
       .set('Content-Type', 'multipart/form-data');
 
     expect(res.status).toBe(400);
@@ -253,10 +285,10 @@ describe('PATCH /api/posts/:id', () => {
     expect(res.body.errors.category).toBeDefined();
   });
 
-  it('should return 200 and updated post without image', async () => {
+  it('should can update existing post without image', async () => {
     const res = await request(app)
       .patch(`/api/posts/${post._id}`)
-      .set('Authorization', `Bearer ${token}`)
+      .set('Authorization', `Bearer ${adminToken}`)
       .set('Content-Type', 'multipart/form-data')
       .field('title', 'test')
       .field('content', 'test')
@@ -267,10 +299,10 @@ describe('PATCH /api/posts/:id', () => {
     expect(res.body.data.postImage).toContain('default.jpg');
   });
 
-  it('should return 200 and updated post with image', async () => {
+  it('should can update existing post with image', async () => {
     const res = await request(app)
       .patch(`/api/posts/${post._id}`)
-      .set('Authorization', `Bearer ${token}`)
+      .set('Authorization', `Bearer ${adminToken}`)
       .set('Content-Type', 'multipart/form-data')
       .field('title', 'test')
       .field('content', 'test')
@@ -284,7 +316,7 @@ describe('PATCH /api/posts/:id', () => {
     expect(res.body.message).toBe('Post updated successfully');
     expect(postImageExists).toBe(true);
 
-    await removeFile('posts', updatedPost.postImage);
+    await removeUploadedFile('posts', updatedPost.postImage);
   });
 });
 
@@ -299,38 +331,47 @@ describe('DELETE /api/posts/:id', () => {
     await removeTestPost();
   });
 
+  it('should reject if unauthorized access', async () => {
+    const res = await request(app)
+      .delete(`/api/posts/${post._id}`)
+      .set('Authorization', `Bearer ${userToken}`);
+
+    expect(res.status).toBe(403);
+    expect(res.body.message).toBe('Permission denied');
+  });
+
   it.each(cases)(
-    'should return $expectedStatus for post with $name',
+    'should reject if $name',
     async ({ id, expectedStatus, expectedMessage }) => {
       const res = await request(app)
         .delete(`/api/posts/${id}`)
-        .set('Authorization', `Bearer ${token}`);
+        .set('Authorization', `Bearer ${adminToken}`);
 
       expect(res.status).toBe(expectedStatus);
       expect(res.body.message).toBe(expectedMessage);
     }
   );
 
-  it('should return 200 and deleted post without deleting default image', async () => {
+  it('should can delete post without deleting default image', async () => {
     const res = await request(app)
       .delete(`/api/posts/${post._id}`)
-      .set('Authorization', `Bearer ${token}`);
+      .set('Authorization', `Bearer ${adminToken}`);
 
-    const postImageExists = await fileExists('posts', post.postImage);
+    const postImageExists = await fileExists('posts', 'default.jpg');
 
     expect(res.status).toBe(200);
     expect(res.body.message).toBe('Post deleted successfully');
     expect(postImageExists).toBe(true);
   });
 
-  it('should return 200 and deleted post with deleting non-default image', async () => {
+  it('should can delete post with deleting non default image', async () => {
     post.postImage = 'test-post.jpg';
     await post.save();
-    await copyFile(testPostImagePath, 'posts');
+    await copyToUploadDir(testPostImagePath, 'posts');
 
     const res = await request(app)
       .delete(`/api/posts/${post._id}`)
-      .set('Authorization', `Bearer ${token}`)
+      .set('Authorization', `Bearer ${adminToken}`)
       .set('Content-Type', 'multipart/form-data');
 
     const postImageExists = await fileExists('posts', post.postImage);
@@ -338,5 +379,96 @@ describe('DELETE /api/posts/:id', () => {
     expect(res.status).toBe(200);
     expect(res.body.message).toBe('Post deleted successfully');
     expect(postImageExists).toBe(false);
+  });
+});
+
+describe('GET /api/posts/:id/comments', () => {
+  let post;
+
+  beforeEach(async () => {
+    post = await createTestPost();
+  });
+
+  afterEach(async () => {
+    await removeTestPost();
+  });
+
+  it('should reject if post id is invalid', async () => {
+    const res = await request(app)
+      .get(`/api/posts/invalid/comments`)
+      .set('Authorization', `Bearer ${adminToken}`);
+
+    expect(res.status).toBe(400);
+    expect(res.body.message).toBe('Validation errors');
+  });
+
+  it('should return empty comments', async () => {
+    const res = await request(app)
+      .get(`/api/posts/${post._id}/comments`)
+      .set('Authorization', `Bearer ${adminToken}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.message).toBe('Comments not found');
+    expect(res.body.data).toHaveLength(0);
+  });
+
+  it('should return comments', async () => {
+    await createManyTestComments({ postId: post._id });
+
+    const res = await request(app)
+      .get(`/api/posts/${post._id}/comments`)
+      .set('Authorization', `Bearer ${adminToken}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.message).toBe('Comments found');
+    expect(res.body.data).toHaveLength(10);
+    expect(res.body.meta.pageSize).toBe(10);
+    expect(res.body.meta.totalItems).toBe(15);
+    expect(res.body.meta.currentPage).toBe(1);
+    expect(res.body.meta.totalPages).toBe(2);
+
+    await removeTestComment();
+  });
+});
+
+describe('PATCH /api/posts/:id/like', () => {
+  afterEach(async () => {
+    await removeTestPost();
+  });
+
+  it('should reject if post id is invalid', async () => {
+    const res = await request(app)
+      .patch(`/api/posts/invalid/like`)
+      .set('Authorization', `Bearer ${adminToken}`);
+
+    expect(res.status).toBe(400);
+    expect(res.body.message).toBe('Validation errors');
+  });
+
+  it('should can like post', async () => {
+    const post = await createTestPost();
+    const res = await request(app)
+      .patch(`/api/posts/${post._id}/like`)
+      .set('Authorization', `Bearer ${userToken}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.message).toBe('Post liked successfully');
+    expect(res.body.data.totalLikes).toBe(1);
+  });
+
+  it('should can unlike post', async () => {
+    const decoded = jwt.decode(userToken);
+    const post = await createTestPost({
+      likes: [decoded.id],
+      totalLikes: 1
+    });
+    const res = await request(app)
+      .patch(`/api/posts/${post._id}/like`)
+      .set('Authorization', `Bearer ${userToken}`);
+
+    console.log(res.body);
+    expect(res.status).toBe(200);
+    expect(res.body.message).toBe('Post unliked successfully');
+    expect(res.body.data.totalLikes).toBe(0);
   });
 });
