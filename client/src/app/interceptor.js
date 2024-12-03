@@ -7,7 +7,7 @@ const axiosInstance = axios.create({
   withCredentials: true,
   headers: {
     'Content-Type': 'application/json',
-  }
+  },
 });
 
 axiosInstance.interceptors.request.use(
@@ -32,7 +32,7 @@ axiosInstance.interceptors.response.use(
         'Invalid verification token',
         'Invalid reset token',
         'Invalid email or password',
-        'Invalid refresh token'
+        'Invalid refresh token',
       ];
 
       if (invalidMessages.includes(message)) {
@@ -52,9 +52,7 @@ axiosInstance.interceptors.response.use(
 
           return axiosInstance(originalRequest);
         } catch (refreshError) {
-          if (refreshError.response && refreshError.response.status === 401) {
-            store.dispatch(clearAuth()); 
-          }
+          store.dispatch(clearAuth());
           return Promise.reject(refreshError);
         }
       }

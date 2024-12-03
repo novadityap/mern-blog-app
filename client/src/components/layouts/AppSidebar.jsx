@@ -78,13 +78,13 @@ const AppSidebar = forwardRef(({ isSidebarOpen }, ref) => {
 
       <Separator />
 
-      <ScrollArea className="mt-5 cursor-pointer">
-        <ul className="px-4 space-y-1 text-gray-200">
+      <ScrollArea>
+        <ul className="px-4 space-y-1 text-gray-200 mt-5 cursor-pointer font-semibold">
           <li>
             <Link
               to="/"
               className={cn(
-                'flex items-center gap-x-3 px-4 py-3 rounded-md hover:bg-gray-200 hover:text-gray-800',
+                'flex items-center  gap-x-3 px-4 py-3 rounded-md hover:bg-gray-200 hover:text-gray-800',
                 pathname === '/' && 'bg-gray-200 text-gray-800'
               )}
               onClick={() => dispatch(clearFilters())}
